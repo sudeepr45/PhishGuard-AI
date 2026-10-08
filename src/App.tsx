@@ -22,7 +22,7 @@ function App() {
   function navigate(to: string) {
     if (to === path) return
     window.history.pushState({}, '', to)
-    setPath(to)
+    setPath(currentPath())
     window.scrollTo({ top: 0, behavior: 'instant' })
   }
 
@@ -32,7 +32,7 @@ function App() {
       ? <HistoryPage />
       : path === '/about'
         ? <AboutPage />
-        : <HomePage />
+        : <HomePage onAnalyze={(mode) => navigate(`/analyze?type=${mode}`)} />
 
   return <AppShell currentPath={path} navigate={navigate}>{page}</AppShell>
 }
