@@ -39,7 +39,6 @@ export function ResearchSections({ onAnalyze }: ResearchSectionsProps) {
             <li key={stage}><span className="pipeline-number">{String(index + 1).padStart(2, '0')}</span><span>{stage}</span></li>
           ))}
         </ol>
-        <p className="pipeline-note">Conceptual workflow · implementation planned</p>
       </section>
 
       <section className="sources-section" aria-labelledby="sources-title">
@@ -52,7 +51,6 @@ export function ResearchSections({ onAnalyze }: ResearchSectionsProps) {
           <article className="source-item"><span className="source-mark">02</span><h3>WEBSITE</h3><p>Evaluate structural and content-level signals.</p></article>
           <article className="source-item"><span className="source-mark">03</span><h3>EMAIL</h3><p>Examine message and contextual indicators.</p></article>
         </div>
-        <p className="source-note">Intended analysis scope · live scanning is not available.</p>
       </section>
 
       <section className="positioning-section" aria-labelledby="positioning-title">
