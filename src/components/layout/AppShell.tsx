@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 
 const links = [
+  { label: 'Home', href: '/' },
   { label: 'Analyze', href: '/analyze' },
   { label: 'History', href: '/history' },
   { label: 'About', href: '/about' },
@@ -31,8 +32,8 @@ export function AppShell({ children, currentPath, navigate }: AppShellProps) {
           <nav className="primary-nav" aria-label="Main navigation">
             {links.map(({ label, href }) => (
               <a key={href} href={href} onClick={(event) => handleNavigation(event, href)}
-                className={currentPath === href ? 'nav-link active' : 'nav-link'}
-                aria-current={currentPath === href ? 'page' : undefined}>
+                className={currentPath === href || (href === '/' && currentPath === '/') || (href === '/history' && currentPath.startsWith('/history/')) ? 'nav-link active' : 'nav-link'}
+                aria-current={currentPath === href || (href === '/' && currentPath === '/') || (href === '/history' && currentPath.startsWith('/history/')) ? 'page' : undefined}>
                 {label}
               </a>
             ))}
@@ -43,8 +44,8 @@ export function AppShell({ children, currentPath, navigate }: AppShellProps) {
       <footer className="site-footer">
         <div className="footer-inner">
           <span>PHISHGUARD AI</span>
-          <span className="footer-note">A research project in multi-source phishing analysis</span>
-          <span className="footer-state"><i aria-hidden="true" /> FRONTEND FOUNDATION</span>
+          <span className="footer-note">A URL classification research prototype</span>
+          <span className="footer-state"><i aria-hidden="true" /> PHASE A MODEL</span>
         </div>
       </footer>
     </div>

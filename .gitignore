@@ -11,6 +11,9 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+.env.*
+!.env.example
 
 # Editor directories and files
 .vscode/*
@@ -22,3 +25,15 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local research data, trained models, and generated evaluation output
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+data/raw/
+artifacts/models/
+outputs/
+backend/data/*.sqlite3
+backend/data/*.sqlite3-shm
+backend/data/*.sqlite3-wal

@@ -2,7 +2,7 @@ export type AnalysisSource = 'url' | 'website' | 'email'
 
 const sources: { id: AnalysisSource; label: string }[] = [
   { id: 'url', label: 'URL' },
-  { id: 'website', label: 'WEBSITE' },
+  { id: 'website', label: 'WEBSITE · PLANNED' },
   { id: 'email', label: 'EMAIL' },
 ]
 
@@ -15,7 +15,7 @@ export function AnalysisSourceSelector({ selected, onSelect }: AnalysisSourceSel
   return (
     <div className="analysis-source-selector" role="group" aria-label="Analysis source">
       {sources.map(({ id, label }) => (
-        <button key={id} type="button" aria-pressed={selected === id}
+        <button key={id} type="button" aria-pressed={selected === id} disabled={id === 'website'}
           className={selected === id ? 'source-option is-selected' : 'source-option'}
           onClick={() => onSelect(id)}>
           <span className="source-option-indicator" aria-hidden="true" />{label}
