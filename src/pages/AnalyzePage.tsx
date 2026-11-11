@@ -4,6 +4,7 @@ import { AnalysisSourceSelector, type AnalysisSource } from '../components/analy
 import { EmailAnalysisPage } from './EmailAnalysisPage'
 import { analyzeUrl, ApiError, validateUrlInput, type UrlAnalysis } from '../services/urlAnalysis'
 import './AnalyzePage.css'
+import { PUBLIC_DEMO_MODE } from '../runtimeConfig'
 
 type Props = { initialUrl?: string; initialResult?: UrlAnalysis }
 type State = 'idle' | 'invalid' | 'loading' | 'success' | 'error'
@@ -86,7 +87,9 @@ export function AnalyzePage({ initialUrl = '', initialResult }: Props) {
               onChange={(event) => changeUrl(event.target.value)}
               placeholder="https://example.com/login" autoComplete="url"
               aria-invalid={state === 'invalid'} aria-describedby={state === 'invalid' ? 'analysis-input-hint analysis-input-error' : 'analysis-input-hint'} />
-            <p id="analysis-input-hint" className="workspace-hint">A scheme-less host is treated as HTTPS. The URL is stored locally after a successful analysis.</p>
+            <p id="analysis-input-hint" className="workspace-hint">{PUBLIC_DEMO_MODE
+              ? 'A scheme-less host is treated as HTTPS. Public demo analyses are not saved.'
+              : 'A scheme-less host is treated as HTTPS. The URL is stored locally after a successful analysis.'}</p>
             {state === 'invalid' && <p id="analysis-input-error" className="validation-message" role="alert">{validationError}</p>}
             <button type="submit" className="button button-primary workspace-submit" disabled={state === 'loading'}>
               {state === 'loading' ? 'ANALYZING…' : 'ANALYZE URL'} <span aria-hidden="true">→</span>
@@ -101,7 +104,9 @@ export function AnalyzePage({ initialUrl = '', initialResult }: Props) {
             </h2></div>
             <span className="state-indicator" aria-hidden="true" />
           </div>
-          {state === 'loading' && <div className="loading-state"><span className="loading-mark" aria-hidden="true" /><span>Waiting for the local model and saving its result to local history.</span></div>}
+          {state === 'loading' && <div className="loading-state"><span className="loading-mark" aria-hidden="true" /><span>{PUBLIC_DEMO_MODE
+            ? 'Running URL analysis with the selected model.'
+            : 'Waiting for the local model and saving its result to local history.'}</span></div>}
           {state === 'idle' && <p className="status-copy">Submit a URL to receive the actual model prediction, scores, and 17 measured URL features.</p>}
           {state === 'invalid' && <p className="status-copy" role="alert">{validationError}</p>}
           {state === 'error' && <div className="analysis-error" role="alert"><p>{error}</p><button type="button" className="new-analysis-button" onClick={() => void runAnalysis(url)}>TRY AGAIN</button></div>}

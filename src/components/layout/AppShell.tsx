@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { PUBLIC_DEMO_MODE } from '../../runtimeConfig'
 
 const links = [
   { label: 'Home', href: '/' },
@@ -30,7 +31,7 @@ export function AppShell({ children, currentPath, navigate }: AppShellProps) {
             <span>PHISHGUARD <span className="wordmark-ai">AI</span></span>
           </a>
           <nav className="primary-nav" aria-label="Main navigation">
-            {links.map(({ label, href }) => (
+            {links.filter(({ href }) => !PUBLIC_DEMO_MODE || href !== '/history').map(({ label, href }) => (
               <a key={href} href={href} onClick={(event) => handleNavigation(event, href)}
                 className={currentPath === href || (href === '/' && currentPath === '/') || (href === '/history' && currentPath.startsWith('/history/')) ? 'nav-link active' : 'nav-link'}
                 aria-current={currentPath === href || (href === '/' && currentPath === '/') || (href === '/history' && currentPath.startsWith('/history/')) ? 'page' : undefined}>

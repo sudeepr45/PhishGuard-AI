@@ -1,4 +1,5 @@
 import { AnalysisInput, type InputMode } from '../components/home/AnalysisInput'
+import { PUBLIC_DEMO_MODE } from '../runtimeConfig'
 
 type HomePageProps = {
   onAnalyze: (mode: InputMode, value?: string) => Promise<void>
@@ -18,7 +19,9 @@ export function HomePage({ onAnalyze }: HomePageProps) {
       </section>
       <section className="home-info" aria-label="Analysis scope">
         <article><h2>URL text only</h2><p>The submitted string is analyzed without opening the destination or reading its page.</p></article>
-        <article><h2>Saved locally</h2><p>Completed results are stored in the local SQLite history and can be cleared from the History page.</p></article>
+        {PUBLIC_DEMO_MODE
+          ? <article><h2>Not saved</h2><p>Public demo analyses are processed for this request only and are not retained.</p></article>
+          : <article><h2>Saved locally</h2><p>Completed results are stored in the local SQLite history and can be cleared from the History page.</p></article>}
         <article><h2>Research prototype</h2><p>Scores are uncalibrated model outputs. A legitimate prediction is not proof that a destination is safe.</p></article>
       </section>
     </div>

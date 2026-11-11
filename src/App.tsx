@@ -5,20 +5,30 @@ import { AnalyzePage } from './pages/AnalyzePage'
 import { HistoryPage } from './pages/HistoryPage'
 import { HomePage } from './pages/HomePage'
 import { analyzeUrl, type UrlAnalysis } from './services/urlAnalysis'
+import { PUBLIC_DEMO_MODE } from './runtimeConfig'
 import './App.css'
 
 function currentPath() {
   return window.location.pathname.replace(/\/$/, '') || '/'
 }
 
+function accessiblePath() {
+  const path = currentPath()
+  if (PUBLIC_DEMO_MODE && (path === '/history' || path.startsWith('/history/'))) {
+    window.history.replaceState({}, '', '/analyze')
+    return '/analyze'
+  }
+  return path
+}
+
 function App() {
-  const [path, setPath] = useState(currentPath)
+  const [path, setPath] = useState(accessiblePath)
   const [initialUrl, setInitialUrl] = useState('')
   const [initialResult, setInitialResult] = useState<UrlAnalysis | null>(null)
 
   useEffect(() => {
     const onPopState = () => {
-      const nextPath = currentPath()
+      const nextPath = accessiblePath()
       setPath(nextPath)
       if (!nextPath.startsWith('/analyze')) {
         setInitialUrl('')
@@ -30,6 +40,7 @@ function App() {
   }, [])
 
   function navigate(to: string) {
+    if (PUBLIC_DEMO_MODE && (to === '/history' || to.startsWith('/history/'))) to = '/analyze'
     if (to === path) return
     if (!to.startsWith('/analyze')) {
       setInitialUrl('')

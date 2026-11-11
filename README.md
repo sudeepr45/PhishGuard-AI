@@ -51,6 +51,8 @@ flowchart LR
 
 The Vite proxy removes `/api` and forwards requests to the local API at `127.0.0.1:8000`. Vite serves the frontend at `http://localhost:5173` by default. The API never fetches the submitted URL.
 
+For anonymous public deployment, see [deployment configuration](docs/DEPLOYMENT.md). Set `PHISHGUARD_PUBLIC_DEMO=true` on the backend and build the frontend with `VITE_PUBLIC_DEMO=true`; analyses remain real but are not saved, and shared history routes are disabled. The frontend API base can be set with `VITE_API_BASE_URL`; its default `/api` preserves the local proxy workflow.
+
 ## Dataset and model
 
 Training uses the [UCI PhiUSIIL Phishing URL (Website) Dataset, ID 967](https://archive.ics.uci.edu/dataset/967/phiusiil+phishing+url+website+dataset). The training script reads only `URL` and `label`; precomputed fields such as `FILENAME` and `URLSimilarityIndex` are excluded. See [data/README.md](data/README.md) and [docs/MODEL_METHODOLOGY.md](docs/MODEL_METHODOLOGY.md) for provenance, cleaning, features, splitting, model selection, results and limitations.

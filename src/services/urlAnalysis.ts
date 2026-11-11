@@ -1,3 +1,5 @@
+import { API_BASE, PUBLIC_DEMO_MODE } from '../runtimeConfig'
+
 export const FEATURE_NAMES = [
   'url_length',
   'hostname_length',
@@ -173,7 +175,6 @@ export const FEATURE_NOTES: Record<FeatureName, string> = {
   has_fragment: 'Whether the parsed URL has a nonempty fragment.',
 }
 
-const API_BASE = '/api'
 const DEFAULT_TIMEOUT_MS = 15_000
 
 export function validateUrlInput(value: string): string | null {
@@ -460,8 +461,8 @@ async function requestJson<T>(path: string, init: RequestInit = {}, timeoutMs = 
       response = await fetch(`${API_BASE}${path}`, { ...init, signal: controller.signal })
     } catch (error) {
       if (externalSignal?.aborted) throw error
-      if (timedOut) throw new ApiError('The local service timed out. Check that it is running, then try again.')
-      throw new ApiError('Could not reach the local analysis service. Start the backend and try again.')
+      if (timedOut) throw new ApiError('The analysis service timed out. Try again later.')
+      throw new ApiError('Could not reach the analysis service. Check its address and try again.')
     }
 
     let body: unknown
@@ -503,6 +504,7 @@ export async function analyzeEmail(rawEmail: string, signal?: AbortSignal): Prom
 }
 
 export async function getAnalysisHistory(limit = 20, offset = 0): Promise<AnalysisHistoryPage> {
+  if (PUBLIC_DEMO_MODE) throw new ApiError('Analysis history is disabled in public demo mode.')
   const query = new URLSearchParams({ limit: String(limit), offset: String(offset) })
   const response = await requestJson<unknown>(`/history?${query}`)
   if (!isRecord(response) || !Array.isArray(response.items) || typeof response.total !== 'number' ||
@@ -519,15 +521,18 @@ export async function getAnalysisHistory(limit = 20, offset = 0): Promise<Analys
 }
 
 export async function getAnalysisById(id: number): Promise<AnalysisHistoryRecord> {
+  if (PUBLIC_DEMO_MODE) throw new ApiError('Analysis history is disabled in public demo mode.')
   if (!Number.isInteger(id) || id < 1) throw new ApiError('Analysis ID must be a positive integer.')
   return parseHistoryRecord(await requestJson<unknown>(`/history/${id}`))
 }
 
 export async function deleteAnalysis(id: number): Promise<DeleteHistoryResult> {
+  if (PUBLIC_DEMO_MODE) throw new ApiError('Analysis history is disabled in public demo mode.')
   if (!Number.isInteger(id) || id < 1) throw new ApiError('Analysis ID must be a positive integer.')
   return requestJson<DeleteHistoryResult>(`/history/${id}`, { method: 'DELETE' })
 }
 
 export async function clearAnalysisHistory(): Promise<DeleteHistoryResult> {
+  if (PUBLIC_DEMO_MODE) throw new ApiError('Analysis history is disabled in public demo mode.')
   return requestJson<DeleteHistoryResult>('/history?confirm=true', { method: 'DELETE' })
 }

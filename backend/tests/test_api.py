@@ -13,6 +13,7 @@ from sklearn.preprocessing import StandardScaler as SkStandardScaler
 from fastapi.testclient import TestClient
 
 from backend.src.api import MODEL_SCOPE, MAX_URL_CHARACTERS, create_app, load_model_artifact, ModelArtifactError
+import backend.src.api as api_module
 from backend.src.features import FEATURE_NAMES, extract_url_features
 from backend.src.training import MODEL_VERSION
 
@@ -93,6 +94,118 @@ def fitted_logistic_pipeline():
 def test_health_reports_process_and_model_readiness_separately():
     ready = client_with_test_model().get("/healthz").json()
     assert ready == {"status": "ready", "api_running": True, "model_ready": True, "database_ready": True}
+
+
+def test_public_demo_runs_inference_without_initializing_or_persisting_history(monkeypatch, tmp_path):
+    db_path = tmp_path / "not-created" / "history.sqlite3"
+    monkeypatch.setenv("PHISHGUARD_PUBLIC_DEMO", "false")
+    local_client = TestClient(create_app(artifact=make_artifact(), database_path=tmp_path / "local.sqlite3"))
+    local_body = local_client.post("/analyze", json={"url": "https://example.com/login"}).json()
+
+    monkeypatch.setenv("PHISHGUARD_PUBLIC_DEMO", "true")
+    client = TestClient(create_app(artifact=make_artifact(), database_path=db_path))
+
+    response = client.post("/analyze", json={"url": "https://example.com/login"})
+
+    assert response.status_code == 200
+    public_body = response.json()
+    assert public_body == local_body
+    assert public_body["prediction"] == "phishing"
+    assert list(public_body["measured_features"]) == list(FEATURE_NAMES)
+    assert client.get("/healthz").json() == {
+        "status": "ready", "api_running": True, "model_ready": True, "database_ready": None,
+    }
+    assert not db_path.parent.exists()
+
+
+def test_public_demo_false_preserves_local_history_behavior(monkeypatch, tmp_path):
+    monkeypatch.setenv("PHISHGUARD_PUBLIC_DEMO", "false")
+    db_path = tmp_path / "local-history.sqlite3"
+    client = TestClient(create_app(artifact=make_artifact(), database_path=db_path))
+    assert client.post("/analyze", json={"url": "https://example.com"}).status_code == 200
+    assert client.get("/history").json()["total"] == 1
+    assert db_path.is_file()
+    assert client.get("/openapi.json").status_code == 200
+
+
+def test_public_demo_disables_history_routes_and_api_docs(monkeypatch, tmp_path):
+    monkeypatch.setenv("PHISHGUARD_PUBLIC_DEMO", "true")
+    client = TestClient(create_app(artifact=make_artifact(), database_path=tmp_path / "unused.sqlite3"))
+
+    for response in (
+        client.get("/history"),
+        client.get("/history/1"),
+        client.get("/history/not-an-id"),
+        client.get("/history/0"),
+        client.delete("/history/1"),
+        client.delete("/history"),
+        client.delete("/history", params={"confirm": "true"}),
+    ):
+        assert response.status_code == 404
+        assert response.json() == {"detail": "History is disabled in public demo mode."}
+    for path in ("/openapi.json", "/docs", "/redoc"):
+        assert client.get(path).status_code == 404
+
+
+def test_public_demo_email_screening_remains_available(monkeypatch):
+    monkeypatch.setenv("PHISHGUARD_PUBLIC_DEMO", "true")
+    client = TestClient(create_app(artifact=make_artifact()))
+    response = client.post("/analyze-email", json={"raw_email": "From: sender@example.org\nSubject: demo\n\nVisit https://example.com"})
+    assert response.status_code == 200
+    assert response.json()["extracted_link_count"] == 1
+
+
+def test_configurable_artifact_paths_and_server_binding(monkeypatch, tmp_path):
+    model_path = tmp_path / "configured-model.joblib"
+    novelty_path = tmp_path / "configured-novelty.joblib"
+    monkeypatch.setenv("PHISHGUARD_MODEL_PATH", str(model_path))
+    monkeypatch.setenv("PHISHGUARD_NOVELTY_PATH", str(novelty_path))
+    seen = []
+    monkeypatch.setattr(api_module, "load_model_artifact", lambda path: seen.append(path) or make_artifact())
+    monkeypatch.setattr(api_module, "load_novelty_artifact", lambda path: seen.append(path) or None)
+
+    configured = create_app()
+    assert seen == [model_path, novelty_path]
+
+    calls = []
+    monkeypatch.setattr(api_module.uvicorn, "run", lambda *args, **kwargs: calls.append(kwargs))
+    monkeypatch.setenv("HOST", "0.0.0.0")
+    monkeypatch.setenv("PORT", "8765")
+    api_module.main()
+    assert calls == [{"host": "0.0.0.0", "port": 8765, "access_log": False}]
+    assert configured.state.model_artifact["algorithm"] == "random_forest"
+
+
+def test_configured_cors_allows_only_exact_origins_without_credentials(monkeypatch):
+    monkeypatch.setenv("PHISHGUARD_CORS_ORIGINS", "https://demo.example, http://localhost:4173")
+    client = TestClient(create_app(artifact=make_artifact()))
+    allowed = client.options("/analyze", headers={
+        "Origin": "https://demo.example",
+        "Access-Control-Request-Method": "POST",
+    })
+    assert allowed.headers["access-control-allow-origin"] == "https://demo.example"
+    assert allowed.headers.get("access-control-allow-credentials") != "true"
+    denied = client.options("/analyze", headers={
+        "Origin": "https://other.example",
+        "Access-Control-Request-Method": "POST",
+    })
+    assert "access-control-allow-origin" not in denied.headers
+
+
+def test_cors_is_not_added_when_origins_are_unconfigured(monkeypatch):
+    monkeypatch.delenv("PHISHGUARD_CORS_ORIGINS", raising=False)
+    client = TestClient(create_app(artifact=make_artifact()))
+    response = client.options("/analyze", headers={
+        "Origin": "https://example.org",
+        "Access-Control-Request-Method": "POST",
+    })
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_cors_rejects_wildcard_origins(monkeypatch):
+    monkeypatch.setenv("PHISHGUARD_CORS_ORIGINS", "*")
+    with pytest.raises(ValueError, match=r"exact HTTP\(S\) origins"):
+        create_app(artifact=make_artifact())
 
 
 def test_production_startup_initializes_configured_database_path(monkeypatch, tmp_path):

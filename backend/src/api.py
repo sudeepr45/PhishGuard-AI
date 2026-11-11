@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import platform
 import re
 from contextlib import asynccontextmanager
@@ -18,6 +19,7 @@ import tldextract
 import uvicorn
 from fastapi import FastAPI, Path as APIPath, Query, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 
@@ -46,6 +48,33 @@ security tools. Scores are uncalibrated estimated model scores, not real-world p
 No analysis history is transmitted to an external service.
 Email Authentication-Results values are unverified header text; no SPF, DKIM, or DMARC verification is performed.
 """
+
+
+def _public_demo_enabled() -> bool:
+    return os.getenv("PHISHGUARD_PUBLIC_DEMO", "").strip().lower() == "true"
+
+
+def _configured_cors_origins() -> list[str]:
+    raw_origins = os.getenv("PHISHGUARD_CORS_ORIGINS", "")
+    origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+    for origin in origins:
+        parsed = urlsplit(origin)
+        if (
+            "*" in origin
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise ValueError("PHISHGUARD_CORS_ORIGINS must contain exact HTTP(S) origins without paths or wildcards")
+        try:
+            _ = parsed.port
+        except ValueError:
+            raise ValueError("PHISHGUARD_CORS_ORIGINS contains an invalid port") from None
+    return origins
 
 
 class ModelArtifactError(RuntimeError):
@@ -341,16 +370,31 @@ class RequestSizeLimitMiddleware:
 
 
 def create_app(
-    model_path: Path = DEFAULT_MODEL_PATH,
+    model_path: Path | None = None,
     artifact: dict[str, Any] | None = None,
     database_path: Path | None = None,
-    novelty_path: Path = DEFAULT_NOVELTY_PATH,
+    novelty_path: Path | None = None,
     novelty_artifact: dict[str, Any] | None = None,
 ) -> FastAPI:
-    history_store = HistoryStore(database_path)
+    public_demo_mode = _public_demo_enabled()
+    selected_model_path = (
+        Path(os.getenv("PHISHGUARD_MODEL_PATH") or DEFAULT_MODEL_PATH)
+        if model_path is None else Path(model_path)
+    )
+    selected_novelty_path = (
+        Path(os.getenv("PHISHGUARD_NOVELTY_PATH") or DEFAULT_NOVELTY_PATH)
+        if novelty_path is None else Path(novelty_path)
+    )
+    history_store = None if public_demo_mode else HistoryStore(database_path)
 
     def initialize_database(application: FastAPI) -> None:
+        if public_demo_mode:
+            application.state.database_ready = None
+            application.state.database_error = None
+            application.state.history_store = None
+            return
         try:
+            assert history_store is not None
             history_store.initialize()
             application.state.database_ready = True
             application.state.database_error = None
@@ -363,7 +407,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-        if not application.state.database_ready:
+        if not public_demo_mode and not application.state.database_ready:
             initialize_database(application)
         yield
 
@@ -372,14 +416,27 @@ def create_app(
         version=MODEL_VERSION,
         description=API_DESCRIPTION,
         contact={"name": "PhishGuard AI research project"},
+        openapi_url=None if public_demo_mode else "/openapi.json",
+        docs_url=None if public_demo_mode else "/docs",
+        redoc_url=None if public_demo_mode else "/redoc",
         lifespan=lifespan,
     )
     app.add_middleware(RequestSizeLimitMiddleware)
-    app.state.database_ready = False
+    cors_origins = _configured_cors_origins()
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_credentials=False,
+            allow_methods=["GET", "HEAD", "POST", "DELETE"],
+            allow_headers=["Content-Type"],
+        )
+    app.state.public_demo_mode = public_demo_mode
+    app.state.database_ready = None if public_demo_mode else False
     app.state.database_error = "Local analysis history is unavailable."
     app.state.history_store = history_store
     try:
-        loaded = _safe_validate_artifact(artifact) if artifact is not None else load_model_artifact(model_path)
+        loaded = _safe_validate_artifact(artifact) if artifact is not None else load_model_artifact(selected_model_path)
         app.state.model_artifact = loaded
         app.state.model_error = None
     except ModelArtifactError as exc:
@@ -389,7 +446,7 @@ def create_app(
     try:
         app.state.novelty_artifact = (
             validate_novelty_artifact(novelty_artifact)
-            if novelty_artifact is not None else load_novelty_artifact(novelty_path)
+            if novelty_artifact is not None else load_novelty_artifact(selected_novelty_path)
         )
         app.state.novelty_error = None
     except NoveltyArtifactError as exc:
@@ -400,15 +457,31 @@ def create_app(
     # Explicit paths are used by tests and embedded callers; initializing them here
     # keeps those apps usable without a server lifespan. The production default is
     # initialized during application startup so importing this module writes nothing.
-    if database_path is not None:
+    if database_path is not None and not public_demo_mode:
         initialize_database(app)
 
     def available_history_store(request: Request) -> HistoryStore | None:
+        if request.app.state.public_demo_mode:
+            return None
         if not request.app.state.database_ready:
             initialize_database(request.app)
         if not request.app.state.database_ready:
             return None
         return request.app.state.history_store
+
+    def disabled_history_response() -> JSONResponse:
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "History is disabled in public demo mode."},
+        )
+
+    @app.middleware("http")
+    async def block_public_history_paths(request: Request, call_next):
+        if public_demo_mode and (
+            request.url.path == "/history" or request.url.path.startswith("/history/")
+        ):
+            return disabled_history_response()
+        return await call_next(request)
 
     def database_failure(request: Request, operation: str, exc: HistoryDatabaseError):
         logger.error("History database %s failed (%s)", operation, str(exc))
@@ -477,11 +550,14 @@ def create_app(
     def health(request: Request):
         model_ready = request.app.state.model_artifact is not None
         database_ready = request.app.state.database_ready
-        status = (
-            "ready" if model_ready and database_ready
-            else "model_unavailable" if not model_ready
-            else "database_unavailable"
-        )
+        if request.app.state.public_demo_mode:
+            status = "ready" if model_ready else "model_unavailable"
+        else:
+            status = (
+                "ready" if model_ready and database_ready
+                else "model_unavailable" if not model_ready
+                else "database_unavailable"
+            )
         return {
             "status": status,
             "api_running": True,
@@ -510,26 +586,27 @@ def create_app(
         loaded = request.app.state.model_artifact
         if loaded is None:
             return JSONResponse(status_code=503, content={"detail": request.app.state.model_error})
-        store = available_history_store(request)
-        if store is None:
+        store = None if request.app.state.public_demo_mode else available_history_store(request)
+        if not request.app.state.public_demo_mode and store is None:
             return JSONResponse(status_code=503, content={"detail": request.app.state.database_error})
         try:
             response = classify_url(payload.url, loaded, request.app.state.novelty_artifact)
-            store.insert_analysis({
-                "normalized_url": response.normalized_url,
-                "prediction": response.prediction,
-                "phishing_score": response.phishing_score,
-                "legitimate_score": response.legitimate_score,
-                "decision_threshold": response.decision_threshold,
-                "model_version": response.model_version,
-                "model_algorithm": response.model_algorithm,
-                "measured_features": response.measured_features.model_dump(),
-                "explanation": (
-                    response.explanation.model_dump()
-                    if response.explanation is not None else None
-                ),
-                "novelty_detection": response.novelty_detection.model_dump(),
-            })
+            if store is not None:
+                store.insert_analysis({
+                    "normalized_url": response.normalized_url,
+                    "prediction": response.prediction,
+                    "phishing_score": response.phishing_score,
+                    "legitimate_score": response.legitimate_score,
+                    "decision_threshold": response.decision_threshold,
+                    "model_version": response.model_version,
+                    "model_algorithm": response.model_algorithm,
+                    "measured_features": response.measured_features.model_dump(),
+                    "explanation": (
+                        response.explanation.model_dump()
+                        if response.explanation is not None else None
+                    ),
+                    "novelty_detection": response.novelty_detection.model_dump(),
+                })
             return response
         except HistoryDatabaseError as exc:
             return database_failure(request, "write", exc)
@@ -605,6 +682,8 @@ def create_app(
         limit: Annotated[int, Query(ge=1, le=100)] = 20,
         offset: Annotated[int, Query(ge=0)] = 0,
     ):
+        if request.app.state.public_demo_mode:
+            return disabled_history_response()
         store = available_history_store(request)
         if store is None:
             return JSONResponse(status_code=503, content={"detail": request.app.state.database_error})
@@ -631,6 +710,8 @@ def create_app(
         },
     )
     def get_history_item(request: Request, analysis_id: Annotated[int, APIPath(ge=1)]):
+        if request.app.state.public_demo_mode:
+            return disabled_history_response()
         store = available_history_store(request)
         if store is None:
             return JSONResponse(status_code=503, content={"detail": request.app.state.database_error})
@@ -653,6 +734,8 @@ def create_app(
         },
     )
     def delete_history_item(request: Request, analysis_id: Annotated[int, APIPath(ge=1)]):
+        if request.app.state.public_demo_mode:
+            return disabled_history_response()
         store = available_history_store(request)
         if store is None:
             return JSONResponse(status_code=503, content={"detail": request.app.state.database_error})
@@ -674,6 +757,8 @@ def create_app(
         },
     )
     def clear_history(request: Request, confirm: bool = Query(False)):
+        if request.app.state.public_demo_mode:
+            return disabled_history_response()
         if not confirm:
             return JSONResponse(status_code=400, content={"detail": "Set confirm=true to clear analysis history."})
         store = available_history_store(request)
@@ -693,7 +778,12 @@ app = create_app()
 
 def main() -> None:
     # Access logs are disabled so submitted URL paths are not written to logs.
-    uvicorn.run(app, host="127.0.0.1", port=8000, access_log=False)
+    uvicorn.run(
+        app,
+        host=os.getenv("HOST", "127.0.0.1"),
+        port=int(os.getenv("PORT", "8000")),
+        access_log=False,
+    )
 
 
 if __name__ == "__main__":
